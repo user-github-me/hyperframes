@@ -152,13 +152,22 @@ const measure = (entries: { target: Element; size?: { width: number; height: num
 const onPresence = (entries: IntersectionObserverEntry[]) =>
   measure(entries.filter((entry) => entry.isIntersecting));
 
-const onResize = (entries: ResizeObserverEntry[]) =>
-  measure(
-    entries.map(({ target, contentRect: { width, height } }) => ({
-      target,
-      size: { width, height },
-    })),
-  );
+// A commit inside the observer's delivery re-renders the strips there and resizes boxes Chromium already measured this
+// frame, which it reports as a ResizeObserver loop; the sizes apply on the next frame instead.
+const sized = new Map<Element, { width: number; height: number }>();
+let sizeFrame = 0;
+const applySizes = () => {
+  sizeFrame = 0;
+  const entries = [...sized].map(([target, size]) => ({ target, size }));
+  sized.clear();
+  measure(entries);
+};
+
+const onResize = (entries: ResizeObserverEntry[]) => {
+  for (const { target, contentRect } of entries)
+    sized.set(target, { width: contentRect.width, height: contentRect.height });
+  sizeFrame ||= requestAnimationFrame(applySizes);
+};
 
 const observeIntersections = (callback: IntersectionObserverCallback) =>
   typeof IntersectionObserver === "undefined"
@@ -190,6 +199,9 @@ function release() {
   window.removeEventListener("scroll", scheduleRefresh, { capture: true });
   cancelAnimationFrame(frame);
   frame = 0;
+  cancelAnimationFrame(sizeFrame);
+  sizeFrame = 0;
+  sized.clear();
 }
 
 const watchGap = (gap: HTMLDivElement | null) => {
